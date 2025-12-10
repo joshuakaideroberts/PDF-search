@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PDF Name Jumper</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app-layout">
+    <!-- Sidebar on the left -->
+    <aside id="sidebar">
+      <h1>Wellsite Search</h1>
+
+      <div class="sidebar-section">
+        <label class="field-label">PDF file</label>
+        <input type="file" id="file-input" accept="application/pdf" />
+      </div>
+
+      <div class="sidebar-section">
+        <label class="field-label">Search by well number</label>
+        <input
+          type="text"
+          id="search-input"
+          placeholder="10-28, 1-29, 03-30, 13-03..."
+        />
+        <button id="search-btn">Go</button>
+      </div>
+
+      <div class="sidebar-section">
+        <label class="field-label">Quick jump (by name)</label>
+        <select id="results-select">
+          <option value="">Names found (optional quick jump)...</option>
+        </select>
+      </div>
+
+      <div id="status" class="status"></div>
+    </aside>
+
+    <!-- Main content with all PDF pages -->
+    <main id="main-content">
+      <div id="pdf-container"></div>
+    </main>
+  </div>
+
+  <!-- Your app logic (imports pdf.js as a module inside) -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>
