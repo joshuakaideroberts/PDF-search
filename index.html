@@ -2,47 +2,46 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>PDF Name Jumper</title>
+  <title>Wellsite Search</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="app-layout">
-    <!-- Sidebar on the left -->
-    <aside id="sidebar">
-      <h1>Wellsite Search</h1>
+  <header id="topbar">
+    <div class="top-left">
+      <span class="app-title">Wellsite Search</span>
 
-      <div class="sidebar-section">
-        <label class="field-label">PDF file</label>
+      <label class="file-label">
         <input type="file" id="file-input" accept="application/pdf" />
-      </div>
+      </label>
+    </div>
 
-      <div class="sidebar-section">
-        <label class="field-label">Search by well number</label>
-        <input
-          type="text"
-          id="search-input"
-          placeholder="10-28, 1-29, 03-30, 13-03..."
-        />
-        <button id="search-btn">Go</button>
-      </div>
+    <div class="top-center">
+      <input
+        type="text"
+        id="search-input"
+        placeholder="Search well by number (10-28, 1-29, 03-30, 13-03...)"
+      />
+      <button id="search-btn">Go</button>
 
-      <div class="sidebar-section">
-        <label class="field-label">Quick jump (by name)</label>
-        <select id="results-select">
-          <option value="">Names found (optional quick jump)...</option>
-        </select>
-      </div>
+      <select id="results-select">
+        <option value="">Names found (optional quick jump)...</option>
+      </select>
+    </div>
 
-      <div id="status" class="status"></div>
-    </aside>
+    <div class="top-right">
+      <label class="zoom-label">
+        Zoom
+        <input type="range" id="zoom-slider" min="60" max="160" value="100" />
+        <span id="zoom-value">100%</span>
+      </label>
+    </div>
+  </header>
 
-    <!-- Main content with all PDF pages -->
-    <main id="main-content">
-      <div id="pdf-container"></div>
-    </main>
-  </div>
+  <main>
+    <div id="pdf-container"></div>
+  </main>
 
-  <!-- Your app logic (imports pdf.js as a module inside) -->
+  <!-- App logic (imports pdf.js as a module inside) -->
   <script type="module" src="app.js"></script>
 </body>
 </html>

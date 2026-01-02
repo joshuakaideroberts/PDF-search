@@ -1,99 +1,157 @@
-
-
-// ====== Import PDF.js as an ES module from the CDN ======
 import * as pdfjsLib from "https://unpkg.com/pdfjs-dist@5.4.449/build/pdf.mjs";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://unpkg.com/pdfjs-dist@5.4.449/build/pdf.worker.mjs";
 
-// DOM elements
+// DOM
 const fileInput = document.getElementById("file-input");
 const searchInput = document.getElementById("search-input");
 const searchBtn = document.getElementById("search-btn");
 const resultsSelect = document.getElementById("results-select");
-const statusEl = document.getElementById("status");
+const zoomSlider = document.getElementById("zoom-slider");
+const zoomValue = document.getElementById("zoom-value");
 const pdfContainer = document.getElementById("pdf-container");
-
-// How big each page should be (1.0 = 100%)
-const DEFAULT_SCALE = 1.0; // a little zoomed out
-const OUTPUT_SCALE = window.devicePixelRatio || 1; // for sharpness on HiDPI screens
 
 // PDF state
 let pdfDoc = null;
 
-// Search cycle state (for multiple wells with same numbers, e.g. 1-29)
-let lastSearchKey = null;
-let lastSearchIndex = 0;
+// Zoom / rendering
+const OUTPUT_SCALE = window.devicePixelRatio || 1;
+let currentScale = 1.0;
 
-// Map of numeric key -> array of page numbers
-// Example: "10-28" -> [8, 57]
-const numberIndex = new Map();
+// Search cycle state (press Enter again to go to next match)
+let lastQuerySig = null;
+let lastMatches = [];
+let lastMatchIndex = 0;
+
+// Index entries: one per page that has a Name:
+const entries = []; // { pageNum, nameRaw, numberKey, tokensKey }
 
 // ---------- Helpers ----------
 
-function setStatus(msg) {
-  // do nothing
+function setZoomFromSlider() {
+  const percent = parseInt(zoomSlider.value, 10) || 100;
+  currentScale = percent / 100;
+  zoomValue.textContent = `${percent}%`;
 }
 
+// Normalize text: uppercase, only letters/numbers/spaces
+function normalizeWords(s) {
+  return (s || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-// Extract a numeric key from text.
-//
-// Examples:
-//   "HILL CREEK UNIT 10-28 F"  -> "10-28"
-//   "FEDERAL 01-29"            -> "1-29"
-//   "03-30" or "3-30 F"        -> "3-30"
-//   "13-03" or "13-3F"         -> "13-3"
-function getNumberKeyFromText(text) {
-  if (!text) return null;
-  const nums = String(text).match(/\d+/g);
-  if (!nums || nums.length === 0) return null;
+// Extract numeric key "A-B" ignoring leading zeros
+function extractNumberKey(text) {
+  const nums = String(text || "").match(/\d+/g);
+  if (!nums) return null;
+  const ints = nums.map((n) => parseInt(n, 10)).filter((n) => !Number.isNaN(n));
+  if (ints.length >= 2) return `${ints[0]}-${ints[1]}`;
+  if (ints.length === 1) return String(ints[0]);
+  return null;
+}
 
-  const ints = nums
-    .map((n) => parseInt(n, 10))
-    .filter((n) => !Number.isNaN(n));
+// Build a "tokensKey" for fuzzy word matching (no spaces)
+function tokensKeyFromName(nameRaw) {
+  // Example: "HILL CREEK UNIT 10-28F" -> "HILLCREEKUNIT"
+  // Example: "LITTLE CANYON UNIT 05-12H" -> "LITTLECANYONUNIT"
+  const cleaned = normalizeWords(nameRaw);
 
-  if (ints.length === 0) return null;
+  // Remove pure number chunks & number-ish chunks like 10-28F
+  const withoutNums = cleaned
+    .split(" ")
+    .filter((w) => !/\d/.test(w))
+    .join(" ");
 
-  if (ints.length >= 2) {
-    return `${ints[0]}-${ints[1]}`;
+  // Collapse to a single key (letters only)
+  return withoutNums.replace(/[^A-Z]/g, "");
+}
+
+// Basic similarity scoring:
+// lower score = better match
+function scoreEntry(query, entry) {
+  const qNorm = normalizeWords(query);
+  const qTokensKey = qNorm.replace(/[^A-Z]/g, ""); // letters only
+  const qNum = extractNumberKey(qNorm);
+
+  let score = 0;
+
+  // --- numbers ---
+  if (qNum) {
+    if (entry.numberKey === qNum) {
+      score -= 1000; // strong boost for exact number match
+    } else if (entry.numberKey) {
+      // numeric closeness fallback
+      const qp = qNum.match(/(\d+)-(\d+)/);
+      const ep = entry.numberKey.match(/(\d+)-(\d+)/);
+      if (qp && ep) {
+        const qa = parseInt(qp[1], 10);
+        const qb = parseInt(qp[2], 10);
+        const ea = parseInt(ep[1], 10);
+        const eb = parseInt(ep[2], 10);
+        score += Math.abs(qa - ea) + Math.abs(qb - eb);
+      } else {
+        score += 50;
+      }
+    } else {
+      score += 200;
+    }
   }
-  // Fallback if only one number exists (rare for your wells)
-  return String(ints[0]);
+
+  // --- words (unit names) ---
+  // If user typed words, reward substring matches
+  const hasLetters = /[A-Z]/.test(qNorm);
+  if (hasLetters) {
+    if (qTokensKey.length > 0) {
+      if (entry.tokensKey.includes(qTokensKey)) {
+        score -= 300; // direct containment = very good
+      } else if (qTokensKey.includes(entry.tokensKey)) {
+        score -= 150;
+      } else {
+        // partial overlap heuristic
+        // count common prefix length
+        let common = 0;
+        const a = entry.tokensKey;
+        const b = qTokensKey;
+        const n = Math.min(a.length, b.length);
+        for (let i = 0; i < n; i++) {
+          if (a[i] === b[i]) common++;
+          else break;
+        }
+        score += (20 - Math.min(common, 20)); // better prefix => smaller score
+        score += 50;
+      }
+    }
+  }
+
+  return score;
 }
 
-// Sort the dropdown options alphabetically & numerically
 function sortDropdown() {
   const options = Array.from(resultsSelect.options);
-
-  // Keep the first default option at the top
-  const first = options.shift();
-
+  const first = options.shift(); // keep placeholder
   options.sort((a, b) =>
     a.textContent.localeCompare(b.textContent, undefined, { numeric: true })
   );
-
   resultsSelect.innerHTML = "";
   resultsSelect.appendChild(first);
-  options.forEach((opt) => resultsSelect.appendChild(opt));
+  options.forEach((o) => resultsSelect.appendChild(o));
 }
 
-// Smooth scroll to a given page and briefly highlight it
 function scrollToPage(pageNum) {
-  const pageEl = document.getElementById(`page-${pageNum}`);
-  if (!pageEl) return;
+  const el = document.getElementById(`page-${pageNum}`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "start" });
 
-  pageEl.scrollIntoView({ behavior: "smooth", block: "start" });
-
-  pageEl.classList.add("highlight");
-  setTimeout(() => {
-    pageEl.classList.remove("highlight");
-  }, 1000);
+  el.classList.add("highlight");
+  setTimeout(() => el.classList.remove("highlight"), 900);
 }
 
 function jumpToPageAndSelect(pageNum) {
   scrollToPage(pageNum);
-
-  // Highlight corresponding dropdown option if it exists
   for (const opt of resultsSelect.options) {
     if (Number(opt.value) === pageNum) {
       resultsSelect.value = opt.value;
@@ -102,49 +160,54 @@ function jumpToPageAndSelect(pageNum) {
   }
 }
 
-// ---------- PDF Loading & Indexing ----------
+// ---------- PDF loading ----------
 
-fileInput.addEventListener("change", async (e) => {
-  const file = e.target.files[0];
+async function loadPdfFromFile(file) {
   if (!file) return;
 
-  setStatus("Loading PDF...");
-  numberIndex.clear();
-  lastSearchKey = null;
-  lastSearchIndex = 0;
+  
+  // reset
+  pdfDoc = null;
+  entries.length = 0;
+  lastQuerySig = null;
+  lastMatches = [];
+  lastMatchIndex = 0;
 
   resultsSelect.innerHTML =
     '<option value="">Names found (optional quick jump)...</option>';
   pdfContainer.innerHTML = "";
 
+  const arrayBuffer = await file.arrayBuffer();
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+  pdfDoc = await loadingTask.promise;
+
+  // reset zoom
+  zoomSlider.value = 100;
+  setZoomFromSlider();
+
+  await renderAllPages();
+  await buildIndexFromNames();
+  sortDropdown();
+}
+
+fileInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
   try {
-    const arrayBuffer = await file.arrayBuffer();
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-    pdfDoc = await loadingTask.promise;
-
-    setStatus(`PDF loaded (${pdfDoc.numPages} pages). Rendering pages...`);
-    await renderAllPages();
-
-    setStatus("Indexing wells...");
-    await buildNumberIndex();
-
-    sortDropdown();
-
-    // setStatus(
-    //   `Ready. Pages: ${pdfDoc.numPages}. Number keys indexed: ${numberIndex.size}.`
-    // );
+    await loadPdfFromFile(file);
   } catch (err) {
     console.error(err);
-    setStatus("Error loading PDF");
   }
 });
+
+// ---------- Rendering (all pages stacked) ----------
 
 async function renderAllPages() {
   if (!pdfDoc) return;
 
   for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
     const page = await pdfDoc.getPage(pageNum);
-    const viewport = page.getViewport({ scale: DEFAULT_SCALE });
+    const viewport = page.getViewport({ scale: currentScale });
 
     const wrapper = document.createElement("div");
     wrapper.className = "pdf-page";
@@ -153,97 +216,77 @@ async function renderAllPages() {
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
 
-    // Render at higher internal resolution for clarity
     canvas.width = viewport.width * OUTPUT_SCALE;
     canvas.height = viewport.height * OUTPUT_SCALE;
 
-    // But display at normal CSS size (zoomed-out)
     canvas.style.width = `${viewport.width}px`;
     canvas.style.height = `${viewport.height}px`;
 
     wrapper.appendChild(canvas);
     pdfContainer.appendChild(wrapper);
 
-    const renderContext = {
+    await page.render({
       canvasContext: ctx,
       viewport,
       transform:
         OUTPUT_SCALE !== 1 ? [OUTPUT_SCALE, 0, 0, OUTPUT_SCALE, 0, 0] : undefined,
-    };
-
-    await page.render(renderContext).promise;
+    }).promise;
   }
 }
 
+async function rerenderPages() {
+  if (!pdfDoc) return;
+  pdfContainer.innerHTML = "";
+  await renderAllPages();
+}
 
-// Go through each page and look for "Name: ..." and extract the well name,
-// then build a map from numeric key (e.g. "10-28") to page numbers.
-async function buildNumberIndex() {
+// ---------- Indexing ----------
+
+async function buildIndexFromNames() {
   if (!pdfDoc) return;
 
-  const seenNameOnPage = new Set();
-
-  // To strip off things like "November 2025" from header lines if they sneak in
   const monthRegex =
     /\b(JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)\s+\d{4}\b/i;
+
+  const seen = new Set();
 
   for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
     const page = await pdfDoc.getPage(pageNum);
     const content = await page.getTextContent();
-
-    // All text on the page in one string
-    const text = content.items.map((item) => item.str).join(" ");
+    const text = content.items.map((it) => it.str).join(" ");
 
     const NAME = "Name:";
-    let searchPos = 0;
+    let pos = 0;
 
     while (true) {
-      const idx = text.indexOf(NAME, searchPos);
+      const idx = text.indexOf(NAME, pos);
       if (idx === -1) break;
 
-      // Everything after "Name:"
       let after = text.slice(idx + NAME.length);
 
-      // Cut at "GAS VOLUME STATEMENT" if it exists (header)
       const gasIdx = after.indexOf("GAS VOLUME STATEMENT");
-      if (gasIdx !== -1) {
-        after = after.slice(0, gasIdx);
-      }
+      if (gasIdx !== -1) after = after.slice(0, gasIdx);
 
-      let nameRaw = after;
+      const m = monthRegex.exec(after);
+      if (m) after = after.slice(0, m.index);
 
-      // Cut off "November 2025", etc. if present
-      const monthMatch = monthRegex.exec(nameRaw);
-      if (monthMatch) {
-        nameRaw = nameRaw.slice(0, monthMatch.index);
-      }
-
-      nameRaw = nameRaw.trim();
+      const nameRaw = after.trim();
       if (!nameRaw) {
-        searchPos = idx + NAME.length;
+        pos = idx + NAME.length;
         continue;
       }
 
-      // Example nameRaw: "HILL CREEK UNIT 10-28F"
-      const key = getNumberKeyFromText(nameRaw);
-      if (!key) {
-        searchPos = idx + NAME.length;
-        continue;
-      }
+      const unique = `${pageNum}::${nameRaw}`;
+      if (!seen.has(unique)) {
+        seen.add(unique);
 
-      // Update index: numeric key -> list of pages
-      if (!numberIndex.has(key)) {
-        numberIndex.set(key, []);
-      }
-      const pages = numberIndex.get(key);
-      if (!pages.includes(pageNum)) {
-        pages.push(pageNum);
-      }
-
-      // Add one dropdown option per (page, well name)
-      const uniqueNameKey = `${pageNum}::${nameRaw}`;
-      if (!seenNameOnPage.has(uniqueNameKey)) {
-        seenNameOnPage.add(uniqueNameKey);
+        const entry = {
+          pageNum,
+          nameRaw,
+          numberKey: extractNumberKey(nameRaw),
+          tokensKey: tokensKeyFromName(nameRaw),
+        };
+        entries.push(entry);
 
         const opt = document.createElement("option");
         opt.value = String(pageNum);
@@ -251,63 +294,52 @@ async function buildNumberIndex() {
         resultsSelect.appendChild(opt);
       }
 
-      // Move past this "Name:" in case there's another on the same page
-      searchPos = idx + NAME.length;
+      pos = idx + NAME.length;
     }
   }
 }
 
-// ---------- Search (numbers only) ----------
+// ---------- Search (fuzzy words + numbers) ----------
 
 function doSearch() {
-  if (!pdfDoc) {
-    setStatus("Load a PDF first.");
-    return;
-  }
+  if (!pdfDoc || entries.length === 0) return;
 
-  const query = searchInput.value.trim();
-  if (!query) return;
+  const q = searchInput.value.trim();
+  if (!q) return;
 
-  // Only use the numeric parts of whatever the user typed
-  const key = getNumberKeyFromText(query);
-  if (!key) {
-    setStatus('Please search using numbers like "10-28" or "1-29".');
-    return;
-  }
+  // Build a query signature so Enter cycles results
+  const qSig = normalizeWords(q);
+  if (qSig !== lastQuerySig) {
+    // New query: compute matches
+    const scored = entries
+      .map((e) => ({ e, s: scoreEntry(qSig, e) }))
+      .sort((a, b) => a.s - b.s);
 
-  const pages = numberIndex.get(key);
-  if (!pages || pages.length === 0) {
-    setStatus(`No wells found for "${key}".`);
-    return;
-  }
-
-  // Cycle through pages if same numeric key is searched again
-  if (key === lastSearchKey) {
-    lastSearchIndex = (lastSearchIndex + 1) % pages.length;
+    // Keep a reasonable number of matches (best 20)
+    lastMatches = scored.slice(0, 20).map((x) => x.e);
+    lastMatchIndex = 0;
+    lastQuerySig = qSig;
   } else {
-    lastSearchKey = key;
-    lastSearchIndex = 0;
+    // Same query: cycle
+    if (lastMatches.length > 0) {
+      lastMatchIndex = (lastMatchIndex + 1) % lastMatches.length;
+    }
   }
 
-  const pageNum = pages[lastSearchIndex];
-  setStatus(
-    `Showing ${key}: match ${lastSearchIndex + 1} of ${pages.length} (page ${pageNum}).`
-  );
-  jumpToPageAndSelect(pageNum);
+  if (!lastMatches.length) return;
+
+  const target = lastMatches[lastMatchIndex];
+  jumpToPageAndSelect(target.pageNum);
 }
 
-// Events
+// Search triggers
 searchBtn.addEventListener("click", doSearch);
-
 searchInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    doSearch();
-  }
+  if (e.key === "Enter") doSearch();
 });
 
-// Prevent arrow keys in dropdown from auto-jumping pages
+// Dropdown: mouse selection jumps; arrow keys do NOT
 let suppressSelectJump = false;
-
 resultsSelect.addEventListener("keydown", (e) => {
   if (
     e.key === "ArrowUp" ||
@@ -318,20 +350,18 @@ resultsSelect.addEventListener("keydown", (e) => {
     suppressSelectJump = true;
   }
 });
-
-// Jump only when the user actually chooses with mouse / touch
 resultsSelect.addEventListener("change", (e) => {
   if (suppressSelectJump) {
-    // Ignore jumps caused by arrow-key navigation in the select
     suppressSelectJump = false;
     return;
   }
-
-  const value = e.target.value;
-  if (!value) return;
-  const pageNum = parseInt(value, 10);
-  if (pageNum) {
-    jumpToPageAndSelect(pageNum);
-  }
+  const pageNum = parseInt(e.target.value, 10);
+  if (pageNum) jumpToPageAndSelect(pageNum);
 });
 
+// Zoom
+setZoomFromSlider();
+zoomSlider.addEventListener("change", async () => {
+  setZoomFromSlider();
+  await rerenderPages();
+});

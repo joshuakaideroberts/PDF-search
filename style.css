@@ -1,106 +1,117 @@
-/* Make the whole viewport a flex layout: sidebar + main content */
+/* Base layout */
 html,
 body {
   height: 100%;
   margin: 0;
   padding: 0;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #111827;
+  background: #f3f4f6;
 }
 
-#app-layout {
-  display: flex;
-  height: 100vh;
-}
-
-/* ===== Sidebar ===== */
-#sidebar {
-  width: 260px;
-  background: #020617;
-  color: #e5e7eb;
-  padding: 16px;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-
+/* Thin sticky top bar */
+#topbar {
   position: sticky;
   top: 0;
-  align-self: flex-start;
-  max-height: 100vh;
-  overflow-y: auto;
-  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.4);
-}
+  z-index: 50;
 
-#sidebar h1 {
-  font-size: 18px;
-  margin: 0 0 4px 0;
-}
-
-.sidebar-section {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+
+  padding: 6px 10px;
+  background: #020617;
+  color: #e5e7eb;
+  font-size: 13px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.top-left,
+.top-center,
+.top-right {
+  display: flex;
+  align-items: center;
   gap: 6px;
 }
 
-.field-label {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #9ca3af;
+/* Let center section grow and push zoom to the right */
+.top-center {
+  flex: 1;
 }
 
-#sidebar input[type="file"],
-#sidebar input[type="text"],
-#sidebar button,
-#sidebar select {
-  padding: 6px 8px;
-  border-radius: 6px;
-  border: 1px solid #374151;
+.app-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-right: 6px;
+}
+
+#topbar input[type="file"],
+#topbar input[type="text"],
+#topbar button,
+#topbar select {
   font-size: 13px;
-  background: #111827;
+}
+
+/* Search input */
+#search-input {
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid #374151;
+  min-width: 260px;
+  max-width: 360px;
+  background: #020617;
   color: #e5e7eb;
 }
 
-#sidebar input[type="file"] {
-  padding: 4px;
-  background: #020617;
-}
-
-#sidebar button {
-  cursor: pointer;
+/* Go button */
+#search-btn {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: none;
   background: #2563eb;
-  border-color: #2563eb;
   color: #f9fafb;
-  margin-top: 4px;
+  cursor: pointer;
 }
 
-#sidebar button:hover {
+#search-btn:hover {
   background: #1d4ed8;
 }
 
-#sidebar select {
-  max-width: 100%;
+/* Quick jump dropdown */
+#results-select {
+  max-width: 260px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid #374151;
+  background: #020617;
+  color: #e5e7eb;
 }
 
-.status {
+/* Zoom control */
+.zoom-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   color: #9ca3af;
-  margin-top: 8px;
 }
 
-/* ===== Main content area ===== */
-#main-content {
-  flex: 1;
-  overflow-y: auto;
-  background: #f3f4f6;
-  padding: 16px;
-  box-sizing: border-box;
+#zoom-slider {
+  vertical-align: middle;
 }
 
-/* Container for all pages */
+#zoom-value {
+  min-width: 36px;
+  text-align: right;
+  color: #e5e7eb;
+}
+
+/* Main content & pages */
+main {
+  padding: 12px;
+}
+
 #pdf-container {
-  max-width: 900px;
+  max-width: 1000px;
   margin: 0 auto 40px auto;
 }
 
@@ -111,6 +122,9 @@ body {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   border-radius: 4px;
   padding: 8px;
+
+  /* Ensure scrollToPage doesn't hide under header */
+  scroll-margin-top: 70px;
 }
 
 /* Canvas inside a page */
